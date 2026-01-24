@@ -1,6 +1,7 @@
 import arcade
 import random
 import math
+from pyglet.graphics import Batch
 from typing import Optional, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
@@ -125,7 +126,7 @@ class Building:
             return True
         return False
 
-    def process(self, grid):
+    def process(self, grid, delta_time):  # Добавьте delta_time сюда
         pass
 
 
@@ -142,9 +143,9 @@ class Mine(Building):
         super().__init__(row, col)
         self.animation_phase = 0.0
 
-    def process(self, grid):
+    def process(self, grid, delta_time):
         self.animation_phase += 0.1
-        if self.do_cycle(1 / 60):
+        if self.do_cycle(delta_time):  # Используем delta_time вместо 1/60
             self.charge_upkeep()
             if self.item is None and economy.spend(20):
                 self.item = ResourceType.ORE
@@ -161,8 +162,8 @@ class CoalMine(Building):
         super().__init__(row, col)
         self.smoke_offset = random.random() * 100
 
-    def process(self, grid):
-        if self.do_cycle(1 / 60):
+    def process(self, grid, delta_time: float):
+        if self.do_cycle(delta_time):
             self.charge_upkeep()
             if self.item is None and economy.spend(15):
                 self.item = ResourceType.COAL
@@ -196,13 +197,13 @@ class Smelter(Building):
             return True
         return False
 
-    def process(self, grid):
+    def process(self, grid, delta_time: float):
         if self.input_a and self.input_b and not self.is_active:
             self.is_active = True
             self.progress = 0.0
 
         if self.is_active:
-            self.progress += 1 / 60
+            self.progress += delta_time  # Раньше было 1/60
             self.heat = min(100.0, self.heat + 2.0)
             if self.progress >= self.cycle_time:
                 self.item = ResourceType.IRON
@@ -229,11 +230,9 @@ class SteelMill(Building):
         self.temperature = 0.0
         self.flame_intensity = 0.0
 
-    def process(self, grid):
-        if self.do_cycle(1 / 60) and self.item is None:
+    def process(self, grid, delta_time: float):
+        if self.do_cycle(delta_time) and self.item is None:
             self.charge_upkeep()
-            self.temperature = 100.0
-            self.flame_intensity = 50.0
             if economy.spend(self.production_cost):
                 self.item = ResourceType.STEEL
                 economy.track_production(ResourceType.STEEL, self.production_cost)
@@ -255,14 +254,12 @@ class AssemblyLine(Building):
         self.assembly_progress = 0.0
         self.conveyor_position = 0.0
 
-    def process(self, grid):
-        self.conveyor_position = (self.conveyor_position + 0.5) % 100
-        if self.do_cycle(1 / 60) and self.item is None:
+    def process(self, grid, delta_time: float):
+        if self.do_cycle(delta_time) and self.item is None:
             self.charge_upkeep()
             if economy.spend(self.production_cost):
                 self.item = ResourceType.CAR
                 economy.track_production(ResourceType.CAR, self.production_cost)
-
 
 class ElectronicsFactory(Building):
     cost = 1500
@@ -276,9 +273,8 @@ class ElectronicsFactory(Building):
         super().__init__(row, col)
         self.light_pulse = 0.0
 
-    def process(self, grid):
-        self.light_pulse = (self.light_pulse + 5.0) % 100
-        if self.do_cycle(1 / 60) and self.item is None:
+    def process(self, grid, delta_time: float):
+        if self.do_cycle(delta_time) and self.item is None:
             self.charge_upkeep()
             if economy.spend(self.production_cost):
                 self.item = ResourceType.ELECTRONICS
@@ -298,14 +294,12 @@ class RobotFactory(Building):
         self.arm_rotation = 0.0
         self.is_assembling = False
 
-    def process(self, grid):
-        self.arm_rotation = (self.arm_rotation + 2.0) % 360
-        if self.do_cycle(1 / 60) and self.item is None:
+    def process(self, grid, delta_time: float):
+        if self.do_cycle(delta_time) and self.item is None:
             self.charge_upkeep()
             if economy.spend(self.production_cost):
                 self.item = ResourceType.ROBOT
                 economy.track_production(ResourceType.ROBOT, self.production_cost)
-                self.is_assembling = True
         if self.is_assembling and self.progress >= 1.0:
             self.is_assembling = False
 
@@ -322,9 +316,8 @@ class ComputerFactory(Building):
         super().__init__(row, col)
         self.screen_flash = 0.0
 
-    def process(self, grid):
-        self.screen_flash = (self.screen_flash + 3.0) % 100
-        if self.do_cycle(1 / 60) and self.item is None:
+    def process(self, grid, delta_time: float):
+        if self.do_cycle(delta_time) and self.item is None:
             self.charge_upkeep()
             if economy.spend(self.production_cost):
                 self.item = ResourceType.COMPUTER
@@ -341,9 +334,9 @@ class Conveyor(Building):
         self.belt_speed = 0.5
         self.belt_position = random.random() * 100
 
-    def process(self, grid):
+    def process(self, grid, delta_time: float):
         self.belt_position = (self.belt_position + self.belt_speed) % 100
-        if not self.do_cycle(1 / 60):
+        if not self.do_cycle(delta_time):
             return
 
         # Принимаем предмет слева
@@ -388,8 +381,8 @@ class Warehouse(Building):
     def can_give_item(self) -> bool:
         return len(self.storage) > 0
 
-    def process(self, grid):
-        if self.do_cycle(2.0) and self.item is None and self.storage:
+    def process(self, grid, delta_time: float):
+        if self.do_cycle(delta_time) and self.item is None and self.storage:
             self.item = self.storage.pop(0)
             self.stored_types[self.item] -= 1
 
@@ -418,8 +411,8 @@ class Market(Building):
     def can_accept(self, item_type: ResourceType) -> bool:
         return self.item is None and item_type in self.sell_prices
 
-    def process(self, grid):
-        if self.do_cycle(1 / 60):
+    def process(self, grid, delta_time: float):
+        if self.do_cycle(delta_time):
             self.charge_upkeep()
             if self.item:
                 price = self.sell_prices.get(self.item, 0)
@@ -481,6 +474,8 @@ class MyGame(arcade.Window):
 
         # Инициализация примера производства
         self.create_example_factory()
+
+
 
     def create_example_factory(self):
         """Создаем пример производственной цепочки"""
@@ -706,43 +701,35 @@ class MyGame(arcade.Window):
     def on_draw(self):
         self.clear()
 
-        # Фон
+        # 1. Фон и сетка
         arcade.draw_lbwh_rectangle_filled(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (25, 25, 35))
-
-        # Сетка
         self.draw_grid_background()
 
-        # Линии сетки
+        # 2. Линии сетки (рисуем один раз)
         for r in range(ROWS + 1):
-            arcade.draw_line(0, r * GRID_SIZE, SCREEN_WIDTH, r * GRID_SIZE,
-                             self.ui_colors['bg_light'], 1)
+            arcade.draw_line(0, r * GRID_SIZE, SCREEN_WIDTH, r * GRID_SIZE, self.ui_colors['bg_light'], 1)
         for c in range(COLS + 1):
-            arcade.draw_line(c * GRID_SIZE, 0, c * GRID_SIZE, ROWS * GRID_SIZE,
-                             self.ui_colors['bg_light'], 1)
+            arcade.draw_line(c * GRID_SIZE, 0, c * GRID_SIZE, ROWS * GRID_SIZE, self.ui_colors['bg_light'], 1)
 
-        # Здания
+        # 3. Здания (только отрисовка, без логики текста!)
         for r in range(ROWS):
             for c in range(COLS):
                 cell = self.grid[r][c]
                 if cell:
-                    x = c * GRID_SIZE
-                    y = r * GRID_SIZE
-                    self.draw_building(cell, x, y)
+                    self.draw_building(cell, c * GRID_SIZE, r * GRID_SIZE)
 
-                # Информация при наведении
-                mouse_grid_row = self.mouse_y // GRID_SIZE
-                mouse_grid_col = self.mouse_x // GRID_SIZE
+        # 4. ВАЖНО: Подсказка при наведении (рисуется ОДИН РАЗ поверх всего)
+        mouse_grid_row = self.mouse_y // GRID_SIZE
+        mouse_grid_col = self.mouse_x // GRID_SIZE
+        if 0 <= mouse_grid_row < ROWS and 0 <= mouse_grid_col < COLS:
+            b = self.grid[mouse_grid_row][mouse_grid_col]
+            if b:
+                status = "ЗАНЯТО" if b.item else "СВОБОДНО"
+                item_name = RESOURCES[b.item].name if b.item else "Пусто"
+                info_text = f"Объект: {b.__class__.__name__}\nСтатус: {status}\nСодержимое: {item_name}"
+                self.draw_tooltip(self.mouse_x, self.mouse_y, info_text)
 
-                if 0 <= mouse_grid_row < ROWS and 0 <= mouse_grid_col < COLS:
-                    b = self.grid[mouse_grid_row][mouse_grid_col]
-                    if b:
-                        status = "ЗАНЯТО" if b.item else "СВОБОДНО"
-                        item_name = RESOURCES[b.item].name if b.item else "Пусто"
-                        info_text = f"Объект: {b.__class__.__name__}\nСтатус: {status}\nСодержимое: {item_name}"
-                        self.draw_tooltip(self.mouse_x, self.mouse_y, info_text)
-
-
-        # UI
+        # 5. UI элементы
         self.draw_ui_panel()
         self.draw_resource_legend()
 
@@ -798,11 +785,12 @@ class MyGame(arcade.Window):
             self.day_timer = 0
             economy.daily_profit = economy.total_sales - int(economy.total_production * 0.7)
 
+        # Передаем delta_time в каждое здание
         for r in range(ROWS):
             for c in range(COLS):
                 cell = self.grid[r][c]
                 if cell:
-                    cell.process(self.grid)
+                    cell.process(self.grid, delta_time)
     # ---------------------------------------
     # МЫШЬ
     # ---------------------------------------
