@@ -522,6 +522,18 @@ class MyGame(arcade.Window):
         arcade.draw_text(f"💰 БАЛАНС: ${economy.balance:,}",
                          info_x, info_y, balance_color, 20, bold=True)
 
+        grid_row = self.mouse_y // GRID_SIZE
+        grid_col = self.mouse_x // GRID_SIZE
+
+        if 0 <= grid_row < ROWS and 0 <= grid_col < COLS:
+            b = self.grid[grid_row][grid_col]
+            if b:
+                status_text = "ЗАНЯТО" if b.item else "СВОБОДНО"
+                resource_name = RESOURCES[b.item].name if b.item else "Нет"
+
+                info = f"{b.__class__.__name__}\nСтатус: {status_text}\nПредмет: {resource_name}"
+                self.draw_tooltip(self.mouse_x, self.mouse_y, info)
+
         # Дневная прибыль
         profit_color = self.ui_colors['success'] if economy.daily_profit >= 0 else self.ui_colors['danger']
         arcade.draw_text(f"📈 ДНЕВНАЯ ПРИБЫЛЬ: ${economy.daily_profit:+,}",
@@ -648,82 +660,45 @@ class MyGame(arcade.Window):
                 arcade.draw_circle_filled(x, y, 1, self.ui_colors['text_dim'])
 
     def draw_building(self, building, x: int, y: int):
-        """Рисуем одно здание с анимацией"""
-        # Фон здания
+        """Рисует здание с круглым индикатором занятости без анимаций ресурсов"""
+        # 1. Определяем базовый цвет здания
         if isinstance(building, Mine):
-            color = (139, 69, 19)  # Коричневый
+            color = (139, 69, 19)
         elif isinstance(building, CoalMine):
-            color = (34, 34, 34)  # Темно-серый
+            color = (34, 34, 34)
         elif isinstance(building, Smelter):
-            color = (255, 140, 0)  # Оранжевый
-            # Анимация пламени
-            if building.is_active:
-                flame_height = 10 + math.sin(building.heat * 0.1) * 5
-                for i in range(3):
-                    flame_x = x + GRID_SIZE // 2 + (i - 1) * 8
-                    flame_y = y + 5
-                    arcade.draw_triangle_filled(
-                        flame_x, flame_y,
-                        flame_x - 4, flame_y + flame_height,
-                        flame_x + 4, flame_y + flame_height,
-                        (255, 69, 0)
-                    )
+            color = (255, 140, 0)
         elif isinstance(building, SteelMill):
-            color = (192, 192, 192)  # Серебряный
+            color = (192, 192, 192)
         elif isinstance(building, AssemblyLine):
-            color = (220, 20, 60)  # Красный
-            # Анимация конвейера
-            for i in range(3):
-                belt_y = y + 10 + i * 10
-                belt_pos = int((building.conveyor_position + i * 20) % GRID_SIZE)
-                arcade.draw_line(x + belt_pos, belt_y, x + belt_pos + 15, belt_y,
-                                 (100, 100, 100), 3)
+            color = (220, 20, 60)
         elif isinstance(building, RobotFactory):
-            color = (0, 191, 255)  # Голубой
-            # Анимация роборуки
-            arm_length = 15
-            arm_x = int(x + GRID_SIZE // 2 + math.cos(math.radians(building.arm_rotation)) * arm_length)
-            arm_y = int(y + GRID_SIZE // 2 + math.sin(math.radians(building.arm_rotation)) * arm_length)
-            arcade.draw_line(x + GRID_SIZE // 2, y + GRID_SIZE // 2, arm_x, arm_y,
-                             (255, 255, 255), 3)
+            color = (0, 191, 255)
         elif isinstance(building, Warehouse):
-            color = (160, 82, 45)  # Сиена
-            # Показываем заполненность склада
-            if hasattr(building, 'storage'):
-                fill_level = len(building.storage) / building.capacity
-                arcade.draw_lbwh_rectangle_filled(x + 5, y + 5,
-                                                  int((GRID_SIZE - 10) * fill_level),
-                                                  GRID_SIZE - 10,
-                                                  (139, 69, 19))
+            color = (160, 82, 45)
         elif isinstance(building, Market):
-            color = (152, 195, 121)  # Зеленый
-            # Анимация денег
-            coin_y = int(y + 15 + math.sin(self.day_timer * 2) * 3)
-            arcade.draw_circle_filled(x + GRID_SIZE // 2, coin_y, 5, (255, 215, 0))
+            color = (152, 195, 121)
+        elif isinstance(building, Conveyor):
+            color = (70, 70, 70)
         else:
-            color = (100, 100, 100)  # Серый по умолчанию
+            color = (100, 100, 100)
 
-        # Основной квадрат здания
+        # 2. Рисуем корпус здания
         arcade.draw_lbwh_rectangle_filled(x, y, GRID_SIZE, GRID_SIZE, color)
+        arcade.draw_lbwh_rectangle_outline(x, y, GRID_SIZE, GRID_SIZE, (255, 255, 255, 100), 2)
 
-        # Обводка
-        arcade.draw_lbwh_rectangle_outline(x, y, GRID_SIZE, GRID_SIZE,
-                                           (255, 255, 255, 100), 2)
+        # 3. Рисуем КРУГ индикатора занятости в центре
+        # Зеленый - свободно, Красный - занято
+        indicator_color = self.ui_colors['danger'] if building.item else self.ui_colors['success']
 
-        # Тень для объема
-        arcade.draw_lbwh_rectangle_filled(x + 2, y - 2, GRID_SIZE - 4, 4, (0, 0, 0, 50))
+        center_x = x + GRID_SIZE // 2
+        center_y = y + GRID_SIZE // 2
 
-        # Иконка ресурса если есть
-        if building.item:
-            resource = RESOURCES[building.item]
-            arcade.draw_text(resource.icon, x + GRID_SIZE // 2 - 6, y + GRID_SIZE // 2 - 8,
-                             resource.color, 20)
+        # Рисуем подложку для круга (обводку)
+        arcade.draw_circle_filled(center_x, center_y, 10, (0, 0, 0, 150))
+        # Рисуем сам индикатор
+        arcade.draw_circle_filled(center_x, center_y, 8, indicator_color)
 
-            # Анимация движения для конвейеров
-            if isinstance(building, Conveyor):
-                offset = int((building.belt_position / 100) * GRID_SIZE)
-                arcade.draw_text(resource.icon, x + offset - 6, y + GRID_SIZE // 2 - 8,
-                                 resource.color, 20)
 
     # ---------------------------------------
     # ОСНОВНОЕ РИСОВАНИЕ
@@ -754,20 +729,56 @@ class MyGame(arcade.Window):
                     y = r * GRID_SIZE
                     self.draw_building(cell, x, y)
 
+                # Информация при наведении
+                mouse_grid_row = self.mouse_y // GRID_SIZE
+                mouse_grid_col = self.mouse_x // GRID_SIZE
+
+                if 0 <= mouse_grid_row < ROWS and 0 <= mouse_grid_col < COLS:
+                    b = self.grid[mouse_grid_row][mouse_grid_col]
+                    if b:
+                        status = "ЗАНЯТО" if b.item else "СВОБОДНО"
+                        item_name = RESOURCES[b.item].name if b.item else "Пусто"
+                        info_text = f"Объект: {b.__class__.__name__}\nСтатус: {status}\nСодержимое: {item_name}"
+                        self.draw_tooltip(self.mouse_x, self.mouse_y, info_text)
+
+
         # UI
         self.draw_ui_panel()
         self.draw_resource_legend()
 
-        # Заголовок
-        arcade.draw_text("🏭 ПРОМЫШЛЕННЫЙ КОМПЛЕКС", SCREEN_WIDTH // 2 - 150, SCREEN_HEIGHT - 40,
-                         self.ui_colors['primary'], 24, bold=True)
+        # --- ИНДИКАТОР СИМУЛЯЦИИ ВВЕРХУ (ИСПРАВЛЕНО) ---
+        status_text = "СИМУЛЯЦИЯ: ЗАПУЩЕНА" if self.simulation_running else "СИМУЛЯЦИЯ: ПАУЗА"
+        status_color = self.ui_colors['success'] if self.simulation_running else self.ui_colors['danger']
+
+        box_width = 250
+        box_height = 35
+        center_x = SCREEN_WIDTH // 2
+        top_y = SCREEN_HEIGHT - 65  # Верхняя точка
+        bottom_y = top_y - box_height  # Нижняя точка (теперь точно меньше top_y)
+
+        # Теперь bottom (703 - 35 = 668) меньше top (703)
+        arcade.draw_lrbt_rectangle_filled(
+            left=center_x - box_width // 2,
+            right=center_x + box_width // 2,
+            bottom=bottom_y,
+            top=top_y,
+            color=(0, 0, 0, 200)
+        )
+
+        arcade.draw_text(status_text, center_x, bottom_y + 10,
+                         status_color, 14, bold=True, anchor_x="center")
+        # ----------------------------------
+
+        # Заголовок (чуть выше индикатора)
+        arcade.draw_text("🏭 ПРОМЫШЛЕННЫЙ КОМПЛЕКС", SCREEN_WIDTH // 2, SCREEN_HEIGHT - 35,
+                         self.ui_colors['primary'], 22, bold=True, anchor_x="center")
 
         # Управление
         controls_text = [
             "⚙️ УПРАВЛЕНИЕ:",
             "1-9,0,M - Выбор постройки",
             "ЛКМ - Построить | ПКМ - Удалить",
-            "S - Старт/Стоп | SPACE - Шаг",
+            "S - СТАРТ / ПАУЗА",  # Изменено здесь
             "R - Сброс | ESC - Отмена выбора"
         ]
 
@@ -782,29 +793,16 @@ class MyGame(arcade.Window):
         if not self.simulation_running:
             return
 
-        # Игровое время
         self.day_timer += delta_time * self.time_scale
         if self.day_timer >= self.day_length:
             self.day_timer = 0
             economy.daily_profit = economy.total_sales - int(economy.total_production * 0.7)
 
-        # Обновление всех зданий
         for r in range(ROWS):
             for c in range(COLS):
                 cell = self.grid[r][c]
                 if cell:
                     cell.process(self.grid)
-
-    def simulate_step(self):
-        """Один шаг симуляции"""
-        for r in range(ROWS):
-            for c in range(COLS):
-                cell = self.grid[r][c]
-                if cell:
-                    if hasattr(cell, 'timer'):
-                        cell.timer = cell.cycle_time
-                    cell.process(self.grid)
-
     # ---------------------------------------
     # МЫШЬ
     # ---------------------------------------
@@ -883,10 +881,7 @@ class MyGame(arcade.Window):
     def on_key_press(self, key, modifiers):
         if key == arcade.key.S:
             self.simulation_running = not self.simulation_running
-        elif key == arcade.key.SPACE:
-            self.simulate_step()
         elif key == arcade.key.R:
-            # Сброс примера
             self.grid = [[None for _ in range(COLS)] for _ in range(ROWS)]
             self.create_example_factory()
 
