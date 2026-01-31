@@ -1,7 +1,4 @@
 import arcade
-import random
-import math
-from pyglet.graphics import Batch
 from typing import Optional, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
@@ -83,7 +80,11 @@ class Economy:
 
 economy = Economy()
 
-
+class Direction(Enum):
+    UP = (1, 0)
+    DOWN = (-1, 0)
+    LEFT = (0, -1)
+    RIGHT = (0, 1)
 # =========================================================
 #                БАЗОВЫЙ КЛАСС МОДУЛЯ
 # =========================================================
@@ -98,26 +99,33 @@ class Building:
     def __init__(self, row: int, col: int):
         self.row = row
         self.col = col
+        self.direction = Direction.RIGHT
         self.item = None
         self.timer = 0.0
         self.progress = 0.0
         self.efficiency = 1.0
-        self.production_queue = []
 
-    def can_accept(self, item_type: ResourceType) -> bool:
-        return self.item is None and item_type in self.input_types
+    def get_output_coords(self) -> Tuple[int, int]:
+        dr, dc = self.direction.value
+        return self.row + dr, self.col + dc
 
-    def accept_item(self, item_type: ResourceType) -> bool:
-        if self.can_accept(item_type):
+    def get_input_coords(self) -> List[Tuple[int, int]]:
+        all_dirs = [Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT]
+        return [(self.row + d.value[0], self.col + d.value[1])
+                for d in all_dirs if d != self.direction]
+
+    def can_accept(self, item_type: ResourceType, from_coords: Tuple[int, int]) -> bool:
+        # Конвейеры принимают всё, заводы — только нужное
+        if isinstance(self, Conveyor):
+            return self.item is None
+        is_input_side = from_coords in self.get_input_coords()
+        return self.item is None and item_type in self.input_types and is_input_side
+
+    def accept_item(self, item_type: ResourceType, from_coords: Tuple[int, int]) -> bool:
+        if self.can_accept(item_type, from_coords):
             self.item = item_type
             return True
         return False
-
-    def can_give_item(self) -> bool:
-        return self.item is not None and self.item == self.output_type
-
-    def charge_upkeep(self):
-        economy.spend(self.upkeep)
 
     def do_cycle(self, delta_time: float) -> bool:
         self.timer += delta_time
@@ -126,30 +134,39 @@ class Building:
             return True
         return False
 
-    def process(self, grid, delta_time):  # Добавьте delta_time сюда
-        pass
+    def charge_upkeep(self):
+        economy.spend(self.upkeep)
+
+    def process(self, grid, delta_time: float):
+        """Пытается передать предмет следующему зданию"""
+        if self.item is not None:
+            out_r, out_c = self.get_output_coords()
+            if 0 <= out_r < ROWS and 0 <= out_c < COLS:
+                target = grid[out_r][out_c]
+                if target and target.accept_item(self.item, (self.row, self.col)):
+                    self.item = None
 
 
 # =========================================================
 #                   ПРОМЫШЛЕННЫЕ МОДУЛИ
 # =========================================================
+
+
+
+
 class Mine(Building):
     cost = 300
     upkeep = 5
     cycle_time = 3.0
     output_type = ResourceType.ORE
 
-    def __init__(self, row: int, col: int):
-        super().__init__(row, col)
-        self.animation_phase = 0.0
-
     def process(self, grid, delta_time):
-        self.animation_phase += 0.1
-        if self.do_cycle(delta_time):  # Используем delta_time вместо 1/60
+        if self.do_cycle(delta_time):
             self.charge_upkeep()
             if self.item is None and economy.spend(20):
                 self.item = ResourceType.ORE
                 economy.track_production(ResourceType.ORE, 20)
+        super().process(grid, delta_time) # Выталкиваем руду
 
 
 class CoalMine(Building):
@@ -158,16 +175,13 @@ class CoalMine(Building):
     cycle_time = 2.5
     output_type = ResourceType.COAL
 
-    def __init__(self, row: int, col: int):
-        super().__init__(row, col)
-        self.smoke_offset = random.random() * 100
-
     def process(self, grid, delta_time: float):
         if self.do_cycle(delta_time):
             self.charge_upkeep()
             if self.item is None and economy.spend(15):
                 self.item = ResourceType.COAL
                 economy.track_production(ResourceType.COAL, 15)
+        super().process(grid, delta_time)
 
 
 class Smelter(Building):
@@ -185,11 +199,13 @@ class Smelter(Building):
         self.heat = 0.0
         self.is_active = False
 
-    def can_accept(self, item_type: ResourceType) -> bool:
-        return (self.input_a is None or self.input_b is None) and item_type in self.input_types
+    def can_accept(self, item_type: ResourceType, from_coords: Tuple[int, int]) -> bool:
+        is_input_side = from_coords in self.get_input_coords()
+        has_space = (self.input_a is None or self.input_b is None)
+        return is_input_side and has_space and item_type in self.input_types
 
-    def accept_item(self, item_type: ResourceType) -> bool:
-        if self.can_accept(item_type):
+    def accept_item(self, item_type: ResourceType, from_coords: Tuple[int, int]) -> bool:
+        if self.can_accept(item_type, from_coords):
             if self.input_a is None:
                 self.input_a = item_type
             else:
@@ -198,13 +214,12 @@ class Smelter(Building):
         return False
 
     def process(self, grid, delta_time: float):
-        if self.input_a and self.input_b and not self.is_active:
+        if self.input_a and self.input_b and not self.is_active and self.item is None:
             self.is_active = True
             self.progress = 0.0
 
         if self.is_active:
-            self.progress += delta_time  # Раньше было 1/60
-            self.heat = min(100.0, self.heat + 2.0)
+            self.progress += delta_time
             if self.progress >= self.cycle_time:
                 self.item = ResourceType.IRON
                 self.input_a = None
@@ -213,8 +228,8 @@ class Smelter(Building):
                 self.progress = 0.0
                 economy.track_production(ResourceType.IRON, self.production_cost)
                 self.charge_upkeep()
-        else:
-            self.heat = max(0.0, self.heat - 0.5)
+
+        super().process(grid, delta_time)  # Выталкиваем металл
 
 
 class SteelMill(Building):
@@ -227,18 +242,36 @@ class SteelMill(Building):
 
     def __init__(self, row: int, col: int):
         super().__init__(row, col)
-        self.temperature = 0.0
-        self.flame_intensity = 0.0
+        self.input_a = None
+        self.input_b = None
+
+    def can_accept(self, item_type: ResourceType, from_coords: Tuple[int, int]) -> bool:
+        is_input_side = from_coords in self.get_input_coords()
+        has_space = (self.input_a is None or self.input_b is None)
+        return is_input_side and has_space and item_type in self.input_types
+
+    def accept_item(self, item_type: ResourceType, from_coords: Tuple[int, int]) -> bool:
+        if self.can_accept(item_type, from_coords):
+            if self.input_a is None:
+                self.input_a = item_type
+            else:
+                self.input_b = item_type
+            return True
+        return False
 
     def process(self, grid, delta_time: float):
-        if self.do_cycle(delta_time) and self.item is None:
-            self.charge_upkeep()
-            if economy.spend(self.production_cost):
-                self.item = ResourceType.STEEL
-                economy.track_production(ResourceType.STEEL, self.production_cost)
-        else:
-            self.temperature = max(0.0, self.temperature - 0.5)
-            self.flame_intensity = max(0.0, self.flame_intensity - 1.0)
+        # Если есть ингредиенты и место для выхода — запускаем цикл
+        if self.input_a and self.input_b and self.item is None:
+            if self.do_cycle(delta_time):
+                self.charge_upkeep()
+                if economy.spend(self.production_cost):
+                    self.item = ResourceType.STEEL
+                    self.input_a = None
+                    self.input_b = None
+                    economy.track_production(ResourceType.STEEL, self.production_cost)
+
+        # ВАЖНО: передаем результат дальше
+        super().process(grid, delta_time)
 
 
 class AssemblyLine(Building):
@@ -329,34 +362,9 @@ class Conveyor(Building):
     upkeep = 1
     cycle_time = 0.5
 
-    def __init__(self, row: int, col: int):
-        super().__init__(row, col)
-        self.belt_speed = 0.5
-        self.belt_position = random.random() * 100
-
     def process(self, grid, delta_time: float):
-        self.belt_position = (self.belt_position + self.belt_speed) % 100
-        if not self.do_cycle(delta_time):
-            return
-
-        # Принимаем предмет слева
-        if self.item is None:
-            left_col = self.col - 1
-            if left_col >= 0:
-                left_cell = grid[self.row][left_col]
-                if left_cell and left_cell.can_give_item():
-                    self.item = left_cell.item
-                    left_cell.item = None
-
-        # Передаем предмет вправо
-        if self.item:
-            next_col = self.col + 1
-            if next_col < COLS:
-                next_cell = grid[self.row][next_col]
-                if next_cell and next_cell.can_accept(self.item):
-                    if next_cell.accept_item(self.item):
-                        self.item = None
-
+        # Конвейеру достаточно просто вызывать базовый процесс передачи
+        super().process(grid, delta_time)
 
 class Warehouse(Building):
     cost = 500
@@ -368,11 +376,13 @@ class Warehouse(Building):
         self.storage = []
         self.stored_types = {rt: 0 for rt in ResourceType}
 
-    def can_accept(self, item_type: ResourceType) -> bool:
-        return len(self.storage) < self.capacity
+    def can_accept(self, item_type: ResourceType, from_coords: Tuple[int, int]) -> bool:
+        # Проверяем, что предмет заходит с одной из 3 сторон входа
+        is_input_side = from_coords in self.get_input_coords()
+        return is_input_side and len(self.storage) < self.capacity
 
-    def accept_item(self, item_type: ResourceType) -> bool:
-        if self.can_accept(item_type):
+    def accept_item(self, item_type: ResourceType, from_coords: Tuple[int, int]) -> bool:
+        if self.can_accept(item_type, from_coords):
             self.storage.append(item_type)
             self.stored_types[item_type] += 1
             return True
@@ -395,31 +405,32 @@ class Market(Building):
     def __init__(self, row: int, col: int):
         super().__init__(row, col)
         self.sell_prices = {
-            ResourceType.ORE: 80,
-            ResourceType.COAL: 50,
-            ResourceType.IRON: 150,
-            ResourceType.STEEL: 350,
-            ResourceType.COPPER: 200,
-            ResourceType.CIRCUIT: 600,
-            ResourceType.ELECTRONICS: 1500,
-            ResourceType.ENGINE: 1000,
-            ResourceType.ROBOT: 2000,
-            ResourceType.CAR: 6000,
+            ResourceType.ORE: 80, ResourceType.COAL: 50,
+            ResourceType.IRON: 150, ResourceType.STEEL: 350,
+            ResourceType.COPPER: 200, ResourceType.CIRCUIT: 600,
+            ResourceType.ELECTRONICS: 1500, ResourceType.ENGINE: 1000,
+            ResourceType.ROBOT: 2000, ResourceType.CAR: 6000,
             ResourceType.COMPUTER: 4000,
         }
 
-    def can_accept(self, item_type: ResourceType) -> bool:
+    # Исправляем сигнатуру: добавляем from_coords
+    def can_accept(self, item_type: ResourceType, from_coords: Tuple[int, int]) -> bool:
+        # Маркет принимает любой ресурс из списка цен, если в нем сейчас пусто
         return self.item is None and item_type in self.sell_prices
 
+    # Также исправляем accept_item, чтобы соответствовать базе
+    def accept_item(self, item_type: ResourceType, from_coords: Tuple[int, int]) -> bool:
+        if self.can_accept(item_type, from_coords):
+            self.item = item_type
+            return True
+        return False
+
     def process(self, grid, delta_time: float):
-        if self.do_cycle(delta_time):
-            self.charge_upkeep()
-            if self.item:
-                price = self.sell_prices.get(self.item, 0)
-                economy.earn(price, self.item)
-                self.item = None
-
-
+        # Если в маркете есть предмет — продаем его немедленно
+        if self.item:
+            price = self.sell_prices.get(self.item, 0)
+            economy.earn(price, self.item)
+            self.item = None # ОЧЕНЬ ВАЖНО: очищаем слот, чтобы маркет мог принять следующий предмет
 # =========================================================
 #                     ИГРА
 # =========================================================
@@ -430,8 +441,14 @@ class MyGame(arcade.Window):
         self.grid: List[List[Optional[Building]]] = [
             [None for _ in range(COLS)] for _ in range(ROWS)
         ]
-
+        self.dir_names = {
+            Direction.UP: "ВВЕРХ",
+            Direction.DOWN: "ВНИЗ",
+            Direction.LEFT: "ВЛЕВО",
+            Direction.RIGHT: "ВПРАВО"
+        }
         self.simulation_running = False
+        self.current_rotation = Direction.RIGHT  # Добавьте эту строку!
         self.build_mode = None
         self.selected_building = None
         self.show_stats = False
@@ -474,7 +491,41 @@ class MyGame(arcade.Window):
 
         # Инициализация примера производства
         self.create_example_factory()
+        # Инициализация Batch для оптимизации текста
+        self.text_batch = arcade.pyglet.graphics.Batch()
 
+        # Статический текст (заголовок и управление)
+        self.ui_labels = []
+
+        # Заголовок
+        self.title_label = arcade.Text(
+            "🏭 ПРОМЫШЛЕННЫЙ КОМПЛЕКС",
+            SCREEN_WIDTH // 2, SCREEN_HEIGHT - 35,
+            self.ui_colors['primary'], 22, bold=True, anchor_x="center",
+            batch=self.text_batch
+        )
+
+        # Управление
+        controls_text = [
+            "⚙️ УПРАВЛЕНИЕ:",
+            "1-9,0,M - Выбор постройки",
+            "ЛКМ - Построить | ПКМ - Удалить",
+            "S - СТАРТ / ПАУЗА",
+            "R - Сброс | ESC - Отмена выбора"
+        ]
+        for i, text in enumerate(controls_text):
+            label = arcade.Text(
+                text, 20, SCREEN_HEIGHT - 80 - i * 20,
+                self.ui_colors['text_dim'], 12,
+                batch=self.text_batch
+            )
+            self.ui_labels.append(label)
+
+        # Динамические лейблы (создаем один раз, обновляем текст в on_update)
+        self.balance_label = arcade.Text("", 20, 140, self.ui_colors['success'], 20, bold=True, batch=self.text_batch)
+        self.profit_label = arcade.Text("", 320, 140, self.ui_colors['success'], 18, batch=self.text_batch)
+        self.status_indicator_label = arcade.Text("", SCREEN_WIDTH // 2, SCREEN_HEIGHT - 90, (255, 255, 255), 14,
+                                                  bold=True, anchor_x="center", batch=self.text_batch)
 
 
     def create_example_factory(self):
@@ -694,6 +745,15 @@ class MyGame(arcade.Window):
         # Рисуем сам индикатор
         arcade.draw_circle_filled(center_x, center_y, 8, indicator_color)
 
+        # Отрисовка индикатора ВЫХОДА
+        cx, cy = x + GRID_SIZE // 2, y + GRID_SIZE // 2
+        dr, dc = building.direction.value
+        # Смещаем желтую точку в сторону, куда здание смотрит (выход)
+        indicator_x = cx + dc * (GRID_SIZE // 2.5)
+        indicator_y = cy + dr * (GRID_SIZE // 2.5)
+
+        arcade.draw_circle_filled(indicator_x, indicator_y, 5, arcade.color.YELLOW)
+
 
     # ---------------------------------------
     # ОСНОВНОЕ РИСОВАНИЕ
@@ -760,12 +820,18 @@ class MyGame(arcade.Window):
         arcade.draw_text("🏭 ПРОМЫШЛЕННЫЙ КОМПЛЕКС", SCREEN_WIDTH // 2, SCREEN_HEIGHT - 35,
                          self.ui_colors['primary'], 22, bold=True, anchor_x="center")
 
-        # Управление
+        rotation_text = f"🔄 ПОВОРОТ ВЫХОДА: {self.dir_names[self.current_rotation]}"
+        arcade.draw_text(rotation_text, 250, SCREEN_HEIGHT - 180,
+                         self.ui_colors['warning'], 14, bold=True)
+
+        # Также можно добавить подсказку про TAB в список управления
+        # Обновите ваш список controls_text:
         controls_text = [
             "⚙️ УПРАВЛЕНИЕ:",
             "1-9,0,M - Выбор постройки",
+            "TAB - Повернуть здание (выход)",  # Новая строка
             "ЛКМ - Построить | ПКМ - Удалить",
-            "S - СТАРТ / ПАУЗА",  # Изменено здесь
+            "S - СТАРТ / ПАУЗА",
             "R - Сброс | ESC - Отмена выбора"
         ]
 
@@ -791,6 +857,7 @@ class MyGame(arcade.Window):
                 cell = self.grid[r][c]
                 if cell:
                     cell.process(self.grid, delta_time)
+
     # ---------------------------------------
     # МЫШЬ
     # ---------------------------------------
@@ -834,6 +901,23 @@ class MyGame(arcade.Window):
         # Проверяем, что индексы в пределах допустимого
         if row < 0 or row >= ROWS or col < 0 or col >= COLS:
             return
+        if button == arcade.MOUSE_BUTTON_LEFT:
+            if self.grid[row][col] is not None: return
+
+            building_map = {
+                1: Mine, 2: CoalMine, 3: Smelter, 4: SteelMill,
+                5: Conveyor, 6: AssemblyLine, 7: ElectronicsFactory,
+                8: RobotFactory, 9: ComputerFactory, 0: Warehouse,
+                'M': Market
+            }
+
+            build_class = building_map.get(self.build_mode)
+            if build_class:
+                if economy.spend(build_class.cost):
+                    new_b = build_class(row, col)
+                    new_b.direction = self.current_rotation  # Установка направления
+                    self.grid[row][col] = new_b
+
 
         # ПКМ - удалить здание
         if button == arcade.MOUSE_BUTTON_RIGHT:
@@ -863,6 +947,9 @@ class MyGame(arcade.Window):
         if economy.spend(build_class.cost):
             self.grid[row][col] = build_class(row, col)
 
+        new_building = build_class(row, col)
+        new_building.direction = self.current_rotation
+        self.grid[row][col] = new_building
     # ---------------------------------------
     # КЛАВИАТУРА
     # ---------------------------------------
@@ -874,6 +961,10 @@ class MyGame(arcade.Window):
             self.create_example_factory()
 
         # Выбор построек
+        if key == arcade.key.TAB:  # Вращение по нажатию Tab
+            dirs = [Direction.RIGHT, Direction.DOWN, Direction.LEFT, Direction.UP]
+            current_idx = dirs.index(self.current_rotation)
+            self.current_rotation = dirs[(current_idx + 1) % 4]
         elif key == arcade.key.KEY_1:
             self.build_mode = 1
         elif key == arcade.key.KEY_2:
@@ -898,6 +989,7 @@ class MyGame(arcade.Window):
             self.build_mode = 'M'
         elif key == arcade.key.ESCAPE:
             self.build_mode = None
+
 
 
 if __name__ == "__main__":
