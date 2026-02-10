@@ -3,8 +3,8 @@ from typing import Optional, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-SCREEN_WIDTH = 1024
-SCREEN_HEIGHT = 768
+SCREEN_WIDTH = 1008
+SCREEN_HEIGHT = 800
 SCREEN_TITLE = "Industrial Complex — Factory Management Simulator"
 
 GRID_SIZE = 48
@@ -294,6 +294,7 @@ class AssemblyLine(Building):
                 self.item = ResourceType.CAR
                 economy.track_production(ResourceType.CAR, self.production_cost)
 
+
 class ElectronicsFactory(Building):
     cost = 1500
     upkeep = 30
@@ -304,7 +305,6 @@ class ElectronicsFactory(Building):
 
     def __init__(self, row: int, col: int):
         super().__init__(row, col)
-        self.light_pulse = 0.0
 
     def process(self, grid, delta_time: float):
         if self.do_cycle(delta_time) and self.item is None:
@@ -313,6 +313,8 @@ class ElectronicsFactory(Building):
                 self.item = ResourceType.ELECTRONICS
                 economy.track_production(ResourceType.ELECTRONICS, self.production_cost)
 
+        # ВАЖНО: Этот вызов передает созданный предмет на конвейер или в маркет
+        super().process(grid, delta_time)
 
 class RobotFactory(Building):
     cost = 3000
@@ -347,7 +349,6 @@ class ComputerFactory(Building):
 
     def __init__(self, row: int, col: int):
         super().__init__(row, col)
-        self.screen_flash = 0.0
 
     def process(self, grid, delta_time: float):
         if self.do_cycle(delta_time) and self.item is None:
@@ -355,6 +356,9 @@ class ComputerFactory(Building):
             if economy.spend(self.production_cost):
                 self.item = ResourceType.COMPUTER
                 economy.track_production(ResourceType.COMPUTER, self.production_cost)
+
+        # ВАЖНО: Этот вызов передает созданный компьютер дальше
+        super().process(grid, delta_time)
 
 
 class Conveyor(Building):
@@ -426,11 +430,11 @@ class Market(Building):
         return False
 
     def process(self, grid, delta_time: float):
-        # Если в маркете есть предмет — продаем его немедленно
+        # Если в Маркете есть предмет — продаем его немедленно
         if self.item:
             price = self.sell_prices.get(self.item, 0)
             economy.earn(price, self.item)
-            self.item = None # ОЧЕНЬ ВАЖНО: очищаем слот, чтобы маркет мог принять следующий предмет
+            self.item = None # ОЧЕНЬ ВАЖНО: очищаем слот, чтобы Маркет мог принять следующий предмет
 # =========================================================
 #                     ИГРА
 # =========================================================
@@ -481,16 +485,12 @@ class MyGame(arcade.Window):
             (3, "Плавильня", Smelter, 800),
             (4, "Сталелитейный завод", SteelMill, 1200),
             (5, "Конвейер", Conveyor, 100),
-            (6, "Сборочная линия", AssemblyLine, 2000),
-            (7, "Электронный завод", ElectronicsFactory, 1500),
-            (8, "Завод роботов", RobotFactory, 3000),
-            (9, "Компьютерный завод", ComputerFactory, 2500),
-            (0, "Склад", Warehouse, 500),
+            (6, "Электронный завод", ElectronicsFactory, 1500),
+            (7, "Компьютерный завод", ComputerFactory, 2500),
+            (8, "Склад", Warehouse, 500),
             ('M', "Рынок", Market, 400),
         ]
 
-        # Инициализация примера производства
-        self.create_example_factory()
         # Инициализация Batch для оптимизации текста
         self.text_batch = arcade.pyglet.graphics.Batch()
 
@@ -528,22 +528,6 @@ class MyGame(arcade.Window):
                                                   bold=True, anchor_x="center", batch=self.text_batch)
 
 
-    def create_example_factory(self):
-        """Создаем пример производственной цепочки"""
-        center_row = ROWS // 2
-        center_col = COLS // 2 - 3
-
-        # Руда -> Железо -> Сталь -> Машины
-        self.grid[center_row][center_col] = Mine(center_row, center_col)
-        self.grid[center_row][center_col + 1] = Conveyor(center_row, center_col + 1)
-        self.grid[center_row][center_col + 2] = Smelter(center_row, center_col + 2)
-        self.grid[center_row][center_col + 3] = Conveyor(center_row, center_col + 3)
-        self.grid[center_row][center_col + 4] = SteelMill(center_row, center_col + 4)
-        self.grid[center_row][center_col + 5] = Conveyor(center_row, center_col + 5)
-        self.grid[center_row][center_col + 6] = AssemblyLine(center_row, center_col + 6)
-        self.grid[center_row][center_col + 7] = Conveyor(center_row, center_col + 7)
-        self.grid[center_row][center_col + 8] = Market(center_row, center_col + 8)
-
     # ---------------------------------------
     # РИСОВАНИЕ UI
     # ---------------------------------------
@@ -567,18 +551,6 @@ class MyGame(arcade.Window):
         balance_color = self.ui_colors['success'] if economy.balance >= 0 else self.ui_colors['danger']
         arcade.draw_text(f"💰 БАЛАНС: ${economy.balance:,}",
                          info_x, info_y, balance_color, 20, bold=True)
-
-        grid_row = self.mouse_y // GRID_SIZE
-        grid_col = self.mouse_x // GRID_SIZE
-
-        if 0 <= grid_row < ROWS and 0 <= grid_col < COLS:
-            b = self.grid[grid_row][grid_col]
-            if b:
-                status_text = "ЗАНЯТО" if b.item else "СВОБОДНО"
-                resource_name = RESOURCES[b.item].name if b.item else "Нет"
-
-                info = f"{b.__class__.__name__}\nСтатус: {status_text}\nПредмет: {resource_name}"
-                self.draw_tooltip(self.mouse_x, self.mouse_y, info)
 
         # Дневная прибыль
         profit_color = self.ui_colors['success'] if economy.daily_profit >= 0 else self.ui_colors['danger']
@@ -616,14 +588,7 @@ class MyGame(arcade.Window):
             arcade.draw_text(f"${cost}", x + building_size // 2 - 15, building_panel_y + 15,
                              self.ui_colors['warning'], 12)
 
-            # Подсказка при наведении
-            mouse_x, mouse_y = self.mouse_x, self.mouse_y
-            if x <= mouse_x <= x + building_size and building_panel_y <= mouse_y <= building_panel_y + building_size:
-                self.draw_tooltip(mouse_x, mouse_y, f"{name}\nСтоимость: ${cost}\nUpkeep: ${building_class.upkeep}")
 
-        # Информация о выбранном здании
-        if self.selected_building:
-            self.draw_building_info(self.selected_building)
 
     def draw_tooltip(self, x: int, y: int, text: str):
         """Рисуем всплывающую подсказку"""
@@ -825,7 +790,7 @@ class MyGame(arcade.Window):
                          self.ui_colors['warning'], 14, bold=True)
 
         # Также можно добавить подсказку про TAB в список управления
-        # Обновите ваш список controls_text:
+        # обновите ваш список controls_text:
         controls_text = [
             "⚙️ УПРАВЛЕНИЕ:",
             "1-9,0,M - Выбор постройки",
@@ -890,7 +855,12 @@ class MyGame(arcade.Window):
 
         grid_height = ROWS * GRID_SIZE
         grid_width = COLS * GRID_SIZE
-
+        building_map = {
+            1: Mine, 2: CoalMine, 3: Smelter, 4: SteelMill,
+            5: Conveyor, 6: ElectronicsFactory,
+            7: ComputerFactory, 8: Warehouse,
+            'M': Market
+        }
         if y_int >= grid_height or x_int >= grid_width:
             return
 
@@ -906,8 +876,8 @@ class MyGame(arcade.Window):
 
             building_map = {
                 1: Mine, 2: CoalMine, 3: Smelter, 4: SteelMill,
-                5: Conveyor, 6: AssemblyLine, 7: ElectronicsFactory,
-                8: RobotFactory, 9: ComputerFactory, 0: Warehouse,
+                5: Conveyor, 6: ElectronicsFactory,
+                7: ComputerFactory, 8: Warehouse,
                 'M': Market
             }
 
@@ -933,12 +903,6 @@ class MyGame(arcade.Window):
             return
 
         # Определяем класс для строительства
-        building_map = {
-            1: Mine, 2: CoalMine, 3: Smelter, 4: SteelMill,
-            5: Conveyor, 6: AssemblyLine, 7: ElectronicsFactory,
-            8: RobotFactory, 9: ComputerFactory, 0: Warehouse,
-            'M': Market
-        }
 
         build_class = building_map.get(self.build_mode)
         if not build_class:
@@ -958,7 +922,6 @@ class MyGame(arcade.Window):
             self.simulation_running = not self.simulation_running
         elif key == arcade.key.R:
             self.grid = [[None for _ in range(COLS)] for _ in range(ROWS)]
-            self.create_example_factory()
 
         # Выбор построек
         if key == arcade.key.TAB:  # Вращение по нажатию Tab
