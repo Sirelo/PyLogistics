@@ -80,11 +80,14 @@ class Economy:
 
 economy = Economy()
 
+
 class Direction(Enum):
     UP = (1, 0)
     DOWN = (-1, 0)
     LEFT = (0, -1)
     RIGHT = (0, 1)
+
+
 # =========================================================
 #                БАЗОВЫЙ КЛАСС МОДУЛЯ
 # =========================================================
@@ -152,8 +155,6 @@ class Building:
 # =========================================================
 
 
-
-
 class Mine(Building):
     cost = 300
     upkeep = 5
@@ -166,7 +167,7 @@ class Mine(Building):
             if self.item is None and economy.spend(20):
                 self.item = ResourceType.ORE
                 economy.track_production(ResourceType.ORE, 20)
-        super().process(grid, delta_time) # Выталкиваем руду
+        super().process(grid, delta_time)  # Выталкиваем руду
 
 
 class CoalMine(Building):
@@ -274,27 +275,6 @@ class SteelMill(Building):
         super().process(grid, delta_time)
 
 
-class AssemblyLine(Building):
-    cost = 2000
-    upkeep = 40
-    cycle_time = 6.0
-    input_types = [ResourceType.STEEL, ResourceType.ELECTRONICS]
-    output_type = ResourceType.CAR
-    production_cost = 500
-
-    def __init__(self, row: int, col: int):
-        super().__init__(row, col)
-        self.assembly_progress = 0.0
-        self.conveyor_position = 0.0
-
-    def process(self, grid, delta_time: float):
-        if self.do_cycle(delta_time) and self.item is None:
-            self.charge_upkeep()
-            if economy.spend(self.production_cost):
-                self.item = ResourceType.CAR
-                economy.track_production(ResourceType.CAR, self.production_cost)
-
-
 class ElectronicsFactory(Building):
     cost = 1500
     upkeep = 30
@@ -315,6 +295,7 @@ class ElectronicsFactory(Building):
 
         # ВАЖНО: Этот вызов передает созданный предмет на конвейер или в маркет
         super().process(grid, delta_time)
+
 
 class RobotFactory(Building):
     cost = 3000
@@ -369,6 +350,7 @@ class Conveyor(Building):
     def process(self, grid, delta_time: float):
         # Конвейеру достаточно просто вызывать базовый процесс передачи
         super().process(grid, delta_time)
+
 
 class Warehouse(Building):
     cost = 500
@@ -434,7 +416,9 @@ class Market(Building):
         if self.item:
             price = self.sell_prices.get(self.item, 0)
             economy.earn(price, self.item)
-            self.item = None # ОЧЕНЬ ВАЖНО: очищаем слот, чтобы Маркет мог принять следующий предмет
+            self.item = None  # ОЧЕНЬ ВАЖНО: очищаем слот, чтобы Маркет мог принять следующий предмет
+
+
 # =========================================================
 #                     ИГРА
 # =========================================================
@@ -527,7 +511,6 @@ class MyGame(arcade.Window):
         self.status_indicator_label = arcade.Text("", SCREEN_WIDTH // 2, SCREEN_HEIGHT - 90, (255, 255, 255), 14,
                                                   bold=True, anchor_x="center", batch=self.text_batch)
 
-
     # ---------------------------------------
     # РИСОВАНИЕ UI
     # ---------------------------------------
@@ -587,8 +570,6 @@ class MyGame(arcade.Window):
                              self.ui_colors['text'], 14, bold=True)
             arcade.draw_text(f"${cost}", x + building_size // 2 - 15, building_panel_y + 15,
                              self.ui_colors['warning'], 12)
-
-
 
     def draw_tooltip(self, x: int, y: int, text: str):
         """Рисуем всплывающую подсказку"""
@@ -681,8 +662,6 @@ class MyGame(arcade.Window):
             color = (255, 140, 0)
         elif isinstance(building, SteelMill):
             color = (192, 192, 192)
-        elif isinstance(building, AssemblyLine):
-            color = (220, 20, 60)
         elif isinstance(building, RobotFactory):
             color = (0, 191, 255)
         elif isinstance(building, Warehouse):
@@ -718,7 +697,6 @@ class MyGame(arcade.Window):
         indicator_y = cy + dr * (GRID_SIZE // 2.5)
 
         arcade.draw_circle_filled(indicator_x, indicator_y, 5, arcade.color.YELLOW)
-
 
     # ---------------------------------------
     # ОСНОВНОЕ РИСОВАНИЕ
@@ -888,7 +866,6 @@ class MyGame(arcade.Window):
                     new_b.direction = self.current_rotation  # Установка направления
                     self.grid[row][col] = new_b
 
-
         # ПКМ - удалить здание
         if button == arcade.MOUSE_BUTTON_RIGHT:
             cell = self.grid[row][col]
@@ -914,6 +891,7 @@ class MyGame(arcade.Window):
         new_building = build_class(row, col)
         new_building.direction = self.current_rotation
         self.grid[row][col] = new_building
+
     # ---------------------------------------
     # КЛАВИАТУРА
     # ---------------------------------------
@@ -952,7 +930,6 @@ class MyGame(arcade.Window):
             self.build_mode = 'M'
         elif key == arcade.key.ESCAPE:
             self.build_mode = None
-
 
 
 if __name__ == "__main__":
